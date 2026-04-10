@@ -113,6 +113,46 @@ streamlit run app.py
 3. Ask questions in the chat input
 4. Get answers with source page citations
 
+## Deploying on Streamlit Cloud
+
+### 1. Push code to GitHub
+```bash
+git init
+git add .
+git commit -m "Initial commit"
+git branch -M main
+git remote add origin https://github.com/YOUR_USERNAME/dochat-ai.git
+git push -u origin main
+```
+
+### 2. Connect to Streamlit Cloud
+1. Go to [share.streamlit.io](https://share.streamlit.io)
+2. Click **"Create app"**
+3. Connect your GitHub account and select the `dochat-ai` repository
+4. Set **Main file path** to `app.py`
+5. Click **"Advanced settings"**
+
+### 3. Add secrets
+In **Advanced settings → Secrets**, paste your credentials in TOML format:
+```toml
+ANTHROPIC_API_KEY = "your_anthropic_api_key"
+MONGODB_URI = "mongodb+srv://username:password@cluster.mongodb.net/?appName=Cluster0"
+DB_NAME = "dochat_db"
+COLLECTION_NAME = "dochat_vectors"
+```
+
+### 4. Allow all IPs in MongoDB Atlas
+Streamlit Cloud uses dynamic IPs, so you must whitelist all IPs:
+1. Go to MongoDB Atlas → **Network Access**
+2. Click **"Add IP Address"**
+3. Enter `0.0.0.0/0` → click **Confirm**
+
+### 5. Deploy
+Click **"Deploy"** — the app will be live at:
+`https://YOUR_USERNAME-dochat-ai-app-xxxx.streamlit.app`
+
+---
+
 ## Project Structure
 
 ```
@@ -120,6 +160,7 @@ dochat-ai/
 ├── app.py              # Streamlit UI
 ├── rag_engine.py       # Agentic RAG pipeline (LangGraph)
 ├── requirements.txt    # Python dependencies
+├── runtime.txt         # Python version pin (3.11) for Streamlit Cloud
 ├── .env                # Environment variables (not committed)
 └── .gitignore
 ```

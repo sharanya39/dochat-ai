@@ -6,6 +6,21 @@ A document Q&A application powered by Agentic RAG (Retrieval-Augmented Generatio
 
 Upload any PDF → Ask questions → Get accurate, cited answers grounded in your document.
 
+## Contributing
+
+Contributions are welcome! Feel free to open issues, suggest features, or submit pull requests.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m "Add your feature"`)
+4. Push to the branch (`git push origin feature/your-feature`)
+5. Open a Pull Request
+
+## Acknowledgements
+
+- Built with assistance from [Claude](https://claude.ai) by Anthropic
+- Powered by [LangChain](https://langchain.com), [LangGraph](https://langchain-ai.github.io/langgraph/), and [MongoDB Atlas](https://www.mongodb.com/atlas)
+
 ## Architecture
 
 ```

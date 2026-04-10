@@ -185,7 +185,7 @@ Context from uploaded documents:
 
 Rules:
 - If the answer is in the context, answer clearly and cite the source page
-- If not found, say "This information is not in the uploaded document"
+- If not found, say ONLY "This information is not in the uploaded document." Do NOT elaborate, do NOT describe what the document is about, do NOT use your general knowledge
 - Be concise but complete"""),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{question}"),

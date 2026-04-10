@@ -1,6 +1,22 @@
 # DocChat AI
 
-A document Q&A application powered by Agentic RAG (Retrieval-Augmented Generation). Upload PDF documents and chat with them using Claude AI, MongoDB Atlas Vector Search, and LangGraph.
+> **Chat with your documents using Agentic AI** — Upload any PDF and get accurate, cited answers powered by Claude AI, MongoDB Atlas Vector Search, and LangGraph.
+
+[![Python](https://img.shields.io/badge/Python-3.11-blue)](https://python.org)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agentic_RAG-red)](https://langchain-ai.github.io/langgraph/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-Atlas_Vector_Search-green)](https://mongodb.com/atlas)
+[![Streamlit](https://img.shields.io/badge/Streamlit-Deployed-ff4b4b)](https://streamlit.io)
+
+---
+
+## Why DocChat AI?
+
+Tired of scrolling through long PDFs to find answers? DocChat AI lets you **ask questions in plain English** and get precise answers with page citations — instantly.
+
+- No more manual searching through documents
+- Answers grounded in your actual document — no hallucinations
+- Intelligent re-retrieval if the first search isn't good enough
+- Each user's documents are fully private and isolated
 
 ## Demo
 
@@ -18,8 +34,10 @@ Contributions are welcome! Feel free to open issues, suggest features, or submit
 
 ## Acknowledgements
 
-- Built with assistance from [Claude](https://claude.ai) by Anthropic
+- Developed by [Sharanya](https://github.com/sharanya39) with AI assistance from [Claude](https://claude.ai) by Anthropic
 - Powered by [LangChain](https://langchain.com), [LangGraph](https://langchain-ai.github.io/langgraph/), and [MongoDB Atlas](https://www.mongodb.com/atlas)
+
+> This project was built as a portfolio project exploring Agentic RAG, LangGraph, and Generative AI with guidance from Claude (Anthropic). The architecture, debugging, and deployment were all done collaboratively with Claude Code.
 
 ## Architecture
 

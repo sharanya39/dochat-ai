@@ -1,0 +1,9 @@
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.streamlit/
+debug_mongo.py
+debug_search.py
+clear_db.py

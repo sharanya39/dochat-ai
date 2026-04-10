@@ -54,9 +54,9 @@ def get_vector_store(session_id: str) -> MongoDBAtlasVectorSearch:
 def ingest_document(file_path: str, session_id: str, original_filename: str = None) -> int:
     """Load PDF, chunk it, embed and store in MongoDB with session tag."""
     filename = original_filename or os.path.basename(file_path)
-    existing = collection.count_documents({"source": filename})
+    existing = collection.count_documents({"source": filename, "session_id": session_id})
     if existing > 0:
-        return existing  # already ingested, skip
+        return existing  # already ingested for this session, skip
 
     loader = PyPDFLoader(file_path)
     raw_docs = loader.load()
@@ -95,13 +95,12 @@ def retrieve_node(state: RAGState) -> RAGState:
     vector_store = get_vector_store(state["session_id"])
     retriever = vector_store.as_retriever(
         search_type="similarity",
-        search_kwargs={"k": 5},
+        search_kwargs={
+            "k": 5,
+            "pre_filter": {"session_id": {"$eq": state["session_id"]}},
+        },
     )
     docs = retriever.invoke(state["question"])
-    print(f"[DEBUG] Question: {state['question']}")
-    print(f"[DEBUG] Retrieved {len(docs)} docs")
-    for i, doc in enumerate(docs):
-        print(f"[DEBUG] Doc {i}: {doc.page_content[:100]}")
     return {**state, "retrieved_docs": docs}
 
 
@@ -145,7 +144,10 @@ def expand_and_retrieve_node(state: RAGState) -> RAGState:
     """Re-retrieve using expanded queries and merge results."""
     vector_store = get_vector_store(state["session_id"])
     retriever = vector_store.as_retriever(
-        search_kwargs={"k": 3},
+        search_kwargs={
+            "k": 3,
+            "pre_filter": {"session_id": {"$eq": state["session_id"]}},
+        },
     )
     all_docs = list(state["retrieved_docs"])
     seen = {d.page_content for d in all_docs}

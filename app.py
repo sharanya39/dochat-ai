@@ -1,7 +1,8 @@
 import streamlit as st
 import os
-import uuid
 import tempfile
+import json
+import base64
 from rag_engine import ingest_document, ask_question, clear_session_docs
 from langchain_core.messages import HumanMessage, AIMessage
 from chat_history import (
@@ -9,6 +10,10 @@ from chat_history import (
     save_uploaded_doc, load_uploaded_docs,
     clear_session_history
 )
+from streamlit_oauth import OAuth2Component
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -17,40 +22,102 @@ st.set_page_config(
     layout="wide",
 )
 
+# ── Google OAuth Setup ────────────────────────────────────────────────────────
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+
+oauth2 = OAuth2Component(
+    client_id=GOOGLE_CLIENT_ID,
+    client_secret=GOOGLE_CLIENT_SECRET,
+    authorize_endpoint="https://accounts.google.com/o/oauth2/auth",
+    token_endpoint="https://oauth2.googleapis.com/token",
+    refresh_token_endpoint="https://oauth2.googleapis.com/token",
+    revoke_token_endpoint="https://oauth2.googleapis.com/revoke",
+)
+
+# ── Login Page ────────────────────────────────────────────────────────────────
+if "token" not in st.session_state:
+    st.title("📄 DocChat AI")
+    st.markdown("### Chat with your documents using Agentic AI")
+    st.divider()
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.markdown("#### Sign in to get started")
+        redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8501")
+        result = oauth2.authorize_button(
+            name="Continue with Google",
+            icon="https://www.google.com.tw/favicon.ico",
+            redirect_uri=redirect_uri,
+            scope="openid email profile",
+            key="google",
+            extras_params={"prompt": "consent", "access_type": "offline"},
+            use_container_width=True,
+        )
+        if result and "token" in result:
+            st.session_state.token = result["token"]
+            st.rerun()
+    st.stop()
+
+# ── Decode user info from token ───────────────────────────────────────────────
+token = st.session_state.token
+id_token = token.get("id_token", "")
+
+try:
+    # Decode JWT payload (middle part)
+    payload = id_token.split(".")[1]
+    # Add padding if needed
+    payload += "=" * (4 - len(payload) % 4)
+    user_info = json.loads(base64.urlsafe_b64decode(payload))
+except Exception:
+    st.error("Failed to decode user info. Please log in again.")
+    del st.session_state.token
+    st.rerun()
+
+user_id = user_info.get("sub")
+user_email = user_info.get("email")
+user_name = user_info.get("name", "User")
+user_picture = user_info.get("picture", "")
+
 st.title("📄 DocChat AI")
 st.caption("Upload documents and chat with them using Agentic RAG")
-
-# ── Stable Session ID (persists across refreshes via URL params) ──────────────
-if "session_id" not in st.query_params:
-    st.query_params["session_id"] = str(uuid.uuid4())
-
-session_id = st.query_params["session_id"]
 
 # ── Load persisted state from MongoDB on first load ───────────────────────────
 if "initialized" not in st.session_state:
     st.session_state.initialized = True
-
-    # Restore chat history
-    saved_messages = load_messages(session_id)
+    saved_messages = load_messages(user_id)
     st.session_state.chat_history = [
         HumanMessage(content=m["content"]) if m["role"] == "human"
         else AIMessage(content=m["content"])
         for m in saved_messages
     ]
+    st.session_state.documents_uploaded = load_uploaded_docs(user_id)
 
-    # Restore uploaded documents list
-    st.session_state.documents_uploaded = load_uploaded_docs(session_id)
-
-# ── Sidebar: Document Upload ──────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # User profile
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        if user_picture:
+            st.image(user_picture, width=45)
+    with col2:
+        st.markdown(f"**{user_name}**")
+        st.caption(user_email)
+
+    if st.button("Logout", type="secondary"):
+        del st.session_state.token
+        st.session_state.initialized = False
+        st.session_state.chat_history = []
+        st.session_state.documents_uploaded = []
+        st.rerun()
+
+    st.divider()
     st.header("📁 Your Documents")
-    st.caption(f"Session: `{session_id[:8]}...`")
 
     uploaded_files = st.file_uploader(
         "Upload PDF files",
         type=["pdf"],
         accept_multiple_files=True,
-        help="Each user session is isolated — your documents are private",
+        help="Your documents are private and tied to your account",
     )
 
     if uploaded_files:
@@ -62,13 +129,13 @@ with st.sidebar:
                         tmp_path = tmp.name
 
                     try:
-                        chunk_count, already_existed = ingest_document(tmp_path, session_id, uploaded_file.name)
+                        chunk_count, already_existed = ingest_document(tmp_path, user_id, uploaded_file.name)
                         st.session_state.documents_uploaded.append(uploaded_file.name)
-                        save_uploaded_doc(session_id, uploaded_file.name)
+                        save_uploaded_doc(user_id, uploaded_file.name)
                         if already_existed:
-                            st.info(f"📂 {uploaded_file.name} already exists in the database. Fetching from shared knowledge base — no re-ingestion needed.")
+                            st.info(f"📂 {uploaded_file.name} already exists. Fetching from shared knowledge base.")
                         else:
-                            st.success(f"✅ {uploaded_file.name} ingested successfully ({chunk_count} chunks stored in MongoDB).")
+                            st.success(f"✅ {uploaded_file.name} ingested ({chunk_count} chunks).")
                     except Exception as e:
                         import traceback
                         st.error(f"Ingestion failed: {e}")
@@ -83,8 +150,8 @@ with st.sidebar:
             st.write(f"• {doc}")
 
         if st.button("🗑️ Clear All Documents", type="secondary"):
-            clear_session_docs(session_id)
-            clear_session_history(session_id)
+            clear_session_docs(user_id)
+            clear_session_history(user_id)
             st.session_state.documents_uploaded = []
             st.session_state.chat_history = []
             st.session_state.initialized = False
@@ -123,7 +190,7 @@ if question := st.chat_input("Ask anything about your documents..."):
         with st.spinner("Thinking..."):
             result = ask_question(
                 question=question,
-                session_id=session_id,
+                session_id=user_id,
                 chat_history=st.session_state.chat_history,
             )
 
@@ -141,5 +208,5 @@ if question := st.chat_input("Ask anything about your documents..."):
     # Save to session state and MongoDB
     st.session_state.chat_history.append(HumanMessage(content=question))
     st.session_state.chat_history.append(AIMessage(content=result["answer"]))
-    save_message(session_id, "human", question)
-    save_message(session_id, "ai", result["answer"])
+    save_message(user_id, "human", question)
+    save_message(user_id, "ai", result["answer"])

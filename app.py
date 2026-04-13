@@ -12,7 +12,6 @@ from chat_history import (
 )
 from streamlit_oauth import OAuth2Component
 from dotenv import load_dotenv
-import extra_streamlit_components as stx
 
 load_dotenv()
 
@@ -36,37 +35,25 @@ oauth2 = OAuth2Component(
     None,
 )
 
-# ── Cookie Manager for token persistence ─────────────────────────────────────
-cookie_manager = stx.CookieManager()
-
-# Load token from cookie if not in session state
-if "token" not in st.session_state:
-    saved_token = cookie_manager.get("dochat_token")
-    if saved_token:
-        st.session_state.token = json.loads(saved_token)
-
 # ── Login Page ────────────────────────────────────────────────────────────────
 if "token" not in st.session_state:
     st.title("📄 DocChat AI")
     st.markdown("### Chat with your documents using Agentic AI")
     st.divider()
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("#### Sign in to get started")
-        redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8501")
-        result = oauth2.authorize_button(
-            name="Continue with Google",
-            icon="https://www.google.com.tw/favicon.ico",
-            redirect_uri=redirect_uri,
-            scope="openid email profile",
-            key="google",
-            extras_params={"prompt": "consent", "access_type": "offline"},
-            use_container_width=True,
-        )
-        if result and "token" in result:
-            st.session_state.token = result["token"]
-            cookie_manager.set("dochat_token", json.dumps(result["token"]), max_age=86400)
-            st.rerun()
+    st.markdown("#### Sign in to get started")
+    redirect_uri = os.getenv("REDIRECT_URI", "http://localhost:8501")
+    result = oauth2.authorize_button(
+        name="Continue with Google",
+        icon="https://www.google.com.tw/favicon.ico",
+        redirect_uri=redirect_uri,
+        scope="openid email profile",
+        key="google",
+        extras_params={"prompt": "consent", "access_type": "offline"},
+        use_container_width=False,
+    )
+    if result and "token" in result:
+        st.session_state.token = result["token"]
+        st.rerun()
     st.stop()
 
 # ── Decode user info from token ───────────────────────────────────────────────

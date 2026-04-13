@@ -1,5 +1,6 @@
 import os
-from typing import List, TypedDict, Annotated
+import json
+from typing import List, TypedDict
 from dotenv import load_dotenv
 
 from langchain_anthropic import ChatAnthropic
@@ -8,11 +9,9 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from pymongo import MongoClient
-import langgraph.graph as lg
 from langgraph.graph import StateGraph, END
 
 load_dotenv()
@@ -23,10 +22,10 @@ set_llm_cache(InMemoryCache())
 
 # ── Models ────────────────────────────────────────────────────────────────────
 llm = ChatAnthropic(
-    model="claude-haiku-4-5-20251001",   # fast + cheap for demos
+    model="claude-haiku-4-5-20251001",
     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"),
     max_tokens=1024,
-    temperature=0,  # 0 = deterministic, consistent answers
+    temperature=0,
 )
 
 embeddings = HuggingFaceEmbeddings(
@@ -38,8 +37,7 @@ client = MongoClient(os.getenv("MONGODB_URI"))
 collection = client["dochat_db"]["dochat_vectors"]
 
 
-def get_vector_store(session_id: str) -> MongoDBAtlasVectorSearch:
-    """Each user session gets an isolated namespace via metadata filtering."""
+def get_vector_store() -> MongoDBAtlasVectorSearch:
     return MongoDBAtlasVectorSearch(
         collection=collection,
         embedding=embeddings,
@@ -51,13 +49,48 @@ def get_vector_store(session_id: str) -> MongoDBAtlasVectorSearch:
 
 
 # ── Document Ingestion ────────────────────────────────────────────────────────
-def ingest_document(file_path: str, session_id: str, original_filename: str = None) -> int:
-    """Load PDF, chunk it, embed and store in MongoDB with session tag."""
-    filename = original_filename or os.path.basename(file_path)
-    existing = collection.count_documents({"source": filename, "session_id": session_id})
-    if existing > 0:
-        return existing  # already ingested for this session, skip
+def compute_file_hash(file_path: str) -> str:
+    """Compute MD5 hash of file content to detect truly identical files."""
+    import hashlib
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
+
+def ingest_document(file_path: str, session_id: str, original_filename: str = None) -> tuple[int, bool]:
+    """
+    Shared Knowledge Base ingestion using filename + content hash:
+    - Same filename + same content → fetch from DB, register session
+    - Same filename + different content → treat as new doc (different hash)
+    - New doc → ingest fresh
+    Returns (chunk_count, already_existed)
+    """
+    filename = original_filename or os.path.basename(file_path)
+    file_hash = compute_file_hash(file_path)
+
+    # Remove session_id from any chunks with same filename but different content
+    # Handles: same filename, different content re-upload by same session
+    collection.update_many(
+        {"source": filename, "file_hash": {"$ne": file_hash}, "session_ids": session_id},
+        {"$pull": {"session_ids": session_id}}
+    )
+    # Clean up orphaned chunks (no sessions left after removal)
+    collection.delete_many({"source": filename, "file_hash": {"$ne": file_hash}, "session_ids": {"$size": 0}})
+
+    # Check if exact same content already exists in DB
+    existing_count = collection.count_documents({"source": filename, "file_hash": file_hash})
+
+    if existing_count > 0:
+        # Same file content — just register this session_id
+        collection.update_many(
+            {"source": filename, "file_hash": file_hash, "session_ids": {"$nin": [session_id]}},
+            {"$addToSet": {"session_ids": session_id}}
+        )
+        return existing_count, True  # already existed
+
+    # New document or same name but different content — ingest fresh
     loader = PyPDFLoader(file_path)
     raw_docs = loader.load()
 
@@ -68,14 +101,16 @@ def ingest_document(file_path: str, session_id: str, original_filename: str = No
     )
     chunks = splitter.split_documents(raw_docs)
 
-    # Tag each chunk with session_id and real filename
+    # Tag each chunk with filename, hash and session_ids list
     for chunk in chunks:
-        chunk.metadata["session_id"] = session_id
         chunk.metadata["source"] = filename
+        chunk.metadata["file_hash"] = file_hash
+        chunk.metadata["session_ids"] = [session_id]
 
-    vector_store = get_vector_store(session_id)
+    vector_store = get_vector_store()
     vector_store.add_documents(chunks)
-    return len(chunks)
+
+    return len(chunks), False  # newly ingested
 
 
 # ── Agentic RAG State ─────────────────────────────────────────────────────────
@@ -91,13 +126,13 @@ class RAGState(TypedDict):
 
 # ── Agentic Nodes ─────────────────────────────────────────────────────────────
 def retrieve_node(state: RAGState) -> RAGState:
-    """Retrieve top-k docs for the current question."""
-    vector_store = get_vector_store(state["session_id"])
+    """Retrieve top-k docs filtering by session_ids array."""
+    vector_store = get_vector_store()
     retriever = vector_store.as_retriever(
         search_type="similarity",
         search_kwargs={
             "k": 5,
-            "pre_filter": {"session_id": {"$eq": state["session_id"]}},
+            "pre_filter": {"session_ids": {"$in": [state["session_id"]]}},
         },
     )
     docs = retriever.invoke(state["question"])
@@ -109,13 +144,12 @@ def evaluate_retrieval_node(state: RAGState) -> RAGState:
     if not state["retrieved_docs"]:
         return {**state, "retrieved_docs": [], "answer": ""}
 
-    # Ask Claude to judge relevance (lightweight check)
     eval_prompt = ChatPromptTemplate.from_template(
         """Given the question: "{question}"
-        
+
         And these retrieved document excerpts:
         {context}
-        
+
         Rate relevance 1-10. If < 6, suggest 2 better search queries.
         Reply ONLY as JSON: {{"score": N, "queries": ["q1", "q2"]}}"""
     )
@@ -123,9 +157,7 @@ def evaluate_retrieval_node(state: RAGState) -> RAGState:
 
     chain = eval_prompt | llm | StrOutputParser()
     try:
-        import json
         result = chain.invoke({"question": state["question"], "context": context_text})
-        # Extract JSON from response
         start = result.find("{")
         end = result.rfind("}") + 1
         parsed = json.loads(result[start:end])
@@ -135,18 +167,18 @@ def evaluate_retrieval_node(state: RAGState) -> RAGState:
         if score < 6 and state["retry_count"] < 2 and queries:
             return {**state, "expanded_queries": queries}
     except Exception:
-        pass  # If parsing fails, proceed with what we have
+        pass
 
     return {**state, "expanded_queries": []}
 
 
 def expand_and_retrieve_node(state: RAGState) -> RAGState:
     """Re-retrieve using expanded queries and merge results."""
-    vector_store = get_vector_store(state["session_id"])
+    vector_store = get_vector_store()
     retriever = vector_store.as_retriever(
         search_kwargs={
             "k": 3,
-            "pre_filter": {"session_id": {"$eq": state["session_id"]}},
+            "pre_filter": {"session_ids": {"$in": [state["session_id"]]}},
         },
     )
     all_docs = list(state["retrieved_docs"])
@@ -161,7 +193,7 @@ def expand_and_retrieve_node(state: RAGState) -> RAGState:
 
     return {
         **state,
-        "retrieved_docs": all_docs[:8],  # cap at 8 chunks
+        "retrieved_docs": all_docs[:8],
         "retry_count": state["retry_count"] + 1,
         "expanded_queries": [],
     }
@@ -179,7 +211,7 @@ def generate_answer_node(state: RAGState) -> RAGState:
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a helpful document assistant. Answer ONLY based on the provided context.
-        
+
 Context from uploaded documents:
 {context}
 
@@ -194,7 +226,7 @@ Rules:
     chain = prompt | llm | StrOutputParser()
     answer = chain.invoke({
         "context": context,
-        "chat_history": state["chat_history"][-6:],  # last 3 turns
+        "chat_history": state["chat_history"][-6:],
         "question": state["question"],
     })
 
@@ -245,6 +277,7 @@ def ask_question(question: str, session_id: str, chat_history: List) -> dict:
         expanded_queries=[],
     )
     result = rag_graph.invoke(initial_state)
+
     # Deduplicate sources by page content
     seen = set()
     unique_sources = []
@@ -269,5 +302,14 @@ def ask_question(question: str, session_id: str, chat_history: List) -> dict:
 
 
 def clear_session_docs(session_id: str):
-    """Delete all vectors for a given session."""
-    collection.delete_many({"session_id": session_id})
+    """
+    Remove session_id from all chunks.
+    Only delete chunk if session_ids becomes empty (no users left).
+    """
+    # Remove this session from all chunks
+    collection.update_many(
+        {"session_ids": session_id},
+        {"$pull": {"session_ids": session_id}}
+    )
+    # Delete chunks that no longer belong to any session
+    collection.delete_many({"session_ids": {"$size": 0}})

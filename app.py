@@ -4,6 +4,11 @@ import uuid
 import tempfile
 from rag_engine import ingest_document, ask_question, clear_session_docs
 from langchain_core.messages import HumanMessage, AIMessage
+from chat_history import (
+    save_message, load_messages,
+    save_uploaded_doc, load_uploaded_docs,
+    clear_session_history
+)
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -15,17 +20,26 @@ st.set_page_config(
 st.title("📄 DocChat AI")
 st.caption("Upload documents and chat with them using Agentic RAG")
 
-# ── Session State ─────────────────────────────────────────────────────────────
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
+# ── Stable Session ID (persists across refreshes via URL params) ──────────────
+if "session_id" not in st.query_params:
+    st.query_params["session_id"] = str(uuid.uuid4())
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+session_id = st.query_params["session_id"]
 
-if "documents_uploaded" not in st.session_state:
-    st.session_state.documents_uploaded = []
+# ── Load persisted state from MongoDB on first load ───────────────────────────
+if "initialized" not in st.session_state:
+    st.session_state.initialized = True
 
-session_id = st.session_state.session_id
+    # Restore chat history
+    saved_messages = load_messages(session_id)
+    st.session_state.chat_history = [
+        HumanMessage(content=m["content"]) if m["role"] == "human"
+        else AIMessage(content=m["content"])
+        for m in saved_messages
+    ]
+
+    # Restore uploaded documents list
+    st.session_state.documents_uploaded = load_uploaded_docs(session_id)
 
 # ── Sidebar: Document Upload ──────────────────────────────────────────────────
 with st.sidebar:
@@ -48,13 +62,11 @@ with st.sidebar:
                         tmp_path = tmp.name
 
                     try:
-                        from pymongo import MongoClient
-                        from rag_engine import collection
-                        already_exists = collection.count_documents({"source": uploaded_file.name}) > 0
-                        chunk_count = ingest_document(tmp_path, session_id, uploaded_file.name)
+                        chunk_count, already_existed = ingest_document(tmp_path, session_id, uploaded_file.name)
                         st.session_state.documents_uploaded.append(uploaded_file.name)
-                        if already_exists:
-                            st.info(f"📂 {uploaded_file.name} was already uploaded before. Retrieving results from stored MongoDB data ({chunk_count} chunks).")
+                        save_uploaded_doc(session_id, uploaded_file.name)
+                        if already_existed:
+                            st.info(f"📂 {uploaded_file.name} already exists in the database. Fetching from shared knowledge base — no re-ingestion needed.")
                         else:
                             st.success(f"✅ {uploaded_file.name} ingested successfully ({chunk_count} chunks stored in MongoDB).")
                     except Exception as e:
@@ -72,8 +84,10 @@ with st.sidebar:
 
         if st.button("🗑️ Clear All Documents", type="secondary"):
             clear_session_docs(session_id)
+            clear_session_history(session_id)
             st.session_state.documents_uploaded = []
             st.session_state.chat_history = []
+            st.session_state.initialized = False
             st.rerun()
 
     st.divider()
@@ -102,11 +116,9 @@ for message in st.session_state.chat_history:
 
 # Chat input
 if question := st.chat_input("Ask anything about your documents..."):
-    # Show user message
     with st.chat_message("user"):
         st.write(question)
 
-    # Get answer
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             result = ask_question(
@@ -117,17 +129,17 @@ if question := st.chat_input("Ask anything about your documents..."):
 
         st.write(result["answer"])
 
-        # Show agentic badge if re-retrieval was used
         if result["used_reretrieval"]:
             st.caption("🔄 Agentic re-retrieval was used to improve this answer")
 
-        # Expandable sources
         if result["sources"]:
             with st.expander("📚 Sources used"):
                 for i, src in enumerate(result["sources"], 1):
                     st.markdown(f"**Source {i}** — {src['source']} (Page {src['page']})")
                     st.text(src["preview"])
 
-    # Update history
+    # Save to session state and MongoDB
     st.session_state.chat_history.append(HumanMessage(content=question))
     st.session_state.chat_history.append(AIMessage(content=result["answer"]))
+    save_message(session_id, "human", question)
+    save_message(session_id, "ai", result["answer"])

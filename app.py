@@ -32,6 +32,7 @@ oauth2 = OAuth2Component(
     "https://accounts.google.com/o/oauth2/auth",
     "https://oauth2.googleapis.com/token",
     "https://oauth2.googleapis.com/token",
+    None,
 )
 
 # ── Login Page ────────────────────────────────────────────────────────────────

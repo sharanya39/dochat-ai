@@ -12,6 +12,7 @@ from chat_history import (
 )
 from streamlit_oauth import OAuth2Component
 from dotenv import load_dotenv
+import extra_streamlit_components as stx
 
 load_dotenv()
 
@@ -35,6 +36,15 @@ oauth2 = OAuth2Component(
     None,
 )
 
+# ── Cookie Manager for token persistence ─────────────────────────────────────
+cookie_manager = stx.CookieManager()
+
+# Load token from cookie if not in session state
+if "token" not in st.session_state:
+    saved_token = cookie_manager.get("dochat_token")
+    if saved_token:
+        st.session_state.token = json.loads(saved_token)
+
 # ── Login Page ────────────────────────────────────────────────────────────────
 if "token" not in st.session_state:
     st.title("📄 DocChat AI")
@@ -55,6 +65,7 @@ if "token" not in st.session_state:
         )
         if result and "token" in result:
             st.session_state.token = result["token"]
+            cookie_manager.set("dochat_token", json.dumps(result["token"]), max_age=86400)
             st.rerun()
     st.stop()
 
@@ -105,6 +116,7 @@ with st.sidebar:
 
     if st.button("Logout", type="secondary"):
         del st.session_state.token
+        cookie_manager.delete("dochat_token")
         st.session_state.initialized = False
         st.session_state.chat_history = []
         st.session_state.documents_uploaded = []

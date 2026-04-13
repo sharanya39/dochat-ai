@@ -27,12 +27,12 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 
 oauth2 = OAuth2Component(
-    client_id=GOOGLE_CLIENT_ID,
-    client_secret=GOOGLE_CLIENT_SECRET,
-    authorize_endpoint="https://accounts.google.com/o/oauth2/auth",
-    token_endpoint="https://oauth2.googleapis.com/token",
-    refresh_token_endpoint="https://oauth2.googleapis.com/token",
-    revoke_token_endpoint="https://oauth2.googleapis.com/revoke",
+    GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET,
+    "https://accounts.google.com/o/oauth2/auth",
+    "https://oauth2.googleapis.com/token",
+    "https://oauth2.googleapis.com/token",
+    "https://oauth2.googleapis.com/revoke",
 )
 
 # ── Login Page ────────────────────────────────────────────────────────────────

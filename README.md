@@ -10,11 +10,13 @@
 
 ---
 
-## Live Demo
+## Try It Yourself
 
-**[https://dochat-ai-39.streamlit.app](https://dochat-ai-39.streamlit.app)**
+This app is not publicly hosted to keep API and database costs in check.
 
-Sign in with your Google account and start chatting with your PDFs instantly.
+Want to try it? **Fork this repo**, add your own credentials in `.env`, and run it locally or deploy it to your own Streamlit Cloud account — the full setup guide is below.
+
+If you'd like to contribute or suggest improvements, feel free to **open a Pull Request**!
 
 ---
 
